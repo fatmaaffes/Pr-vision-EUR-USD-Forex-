@@ -277,6 +277,36 @@ if saved_matches:
 else:
     best_checkpoint, saved_source = load_checkpoint(architecture)
 
+if best_checkpoint is None:
+    with st.expander("J'ai déjà un modèle entraîné (.pt) — l'importer sans réentraînement"):
+        uploaded = st.file_uploader(
+            f"Importer les poids {architecture} déjà entraînés",
+            type=["pt", "pth"], key=f"optuna_recover_{architecture}",
+        )
+        if uploaded is not None:
+            try:
+                from src.dashboard_models import checkpoint_path
+                recovered_checkpoint = torch.load(
+                    BytesIO(uploaded.getvalue()), map_location="cpu", weights_only=True
+                )
+                if recovered_checkpoint.get("architecture") != architecture:
+                    raise ValueError("Ce fichier correspond à une autre architecture.")
+                # Vérifier le réseau, les dates et le scaler avant sauvegarde.
+                evaluated = evaluate_saved_checkpoint(
+                    recovered_checkpoint, architecture, frame
+                )
+                st.success(
+                    f"Modèle valide : MAE validation {evaluated['mae']:.6f}. "
+                    "Il peut être conservé sans nouvel entraînement."
+                )
+                if st.button("Enregistrer ce modèle sur ce PC", key=f"save_import_{architecture}"):
+                    target = checkpoint_path(architecture)
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    torch.save(recovered_checkpoint, target)
+                    st.rerun()
+            except (KeyError, ValueError, TypeError, RuntimeError, OSError) as exc:
+                st.error(f"Ce fichier ne peut pas être restauré : {exc}")
+
 if best_checkpoint is not None:
     st.subheader(f"Résultats enregistrés — {architecture}")
     st.success(
