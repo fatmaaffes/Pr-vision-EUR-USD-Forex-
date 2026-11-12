@@ -14,7 +14,7 @@ st.sidebar.caption("Projet académique · Deep Learning & Finance")
 pages = {
     "Comprendre et explorer": [
         st.Page("pages/phase_01.py", title="01 · Cadrage métier", icon="🏦", url_path="phase-01"),
-        st.Page("pages/phase_02.py", title="02 · Collecte et dataset BCE", icon="📥", url_path="phase-02", default=True),
+        st.Page("pages/phase_02.py", title="02 · Collecte et dataset BCE", icon="📥", url_path="phase-02"),
         st.Page("pages/phase_03.py", title="03 · Exploration EDA", icon="📊", url_path="phase-03"),
     ],
     "Préparer et modéliser": [
@@ -29,7 +29,7 @@ pages = {
     ],
     "Appliquer et livrer": [
         st.Page("pages/phase_10.py", title="10 · Risque de change", icon="💶", url_path="phase-10"),
-        st.Page("pages/phase_11.py", title="11 · Dashboard final", icon="🖥️", url_path="phase-11"),
+        st.Page("pages/phase_11.py", title="11 · Dashboard utilisateur", icon="🖥️", url_path="phase-11", default=True),
         st.Page("pages/phase_12.py", title="12 · Validation et livraison", icon="✅", url_path="phase-12"),
     ],
 }
