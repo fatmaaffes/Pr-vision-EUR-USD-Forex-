@@ -129,9 +129,10 @@ def get_checkpoint(architecture: str):
         return None
 
 
+NETWORK_ARCHITECTURES = ("LSTM", "GRU", "TCN")
 checkpoints = {
     arch: get_checkpoint(arch)
-    for arch in ("LSTM", "GRU", "TCN")
+    for arch in NETWORK_ARCHITECTURES
 }
 
 
@@ -179,7 +180,7 @@ def predict_validation(arch: str, checkpoint: dict) -> np.ndarray:
 
 
 columns = ["Prévision — Naïf"]
-for arch in ("LSTM", "GRU"):
+for arch in NETWORK_ARCHITECTURES:
     checkpoint = checkpoints[arch]
     if checkpoint is None:
         continue
@@ -200,6 +201,14 @@ for arch in ("LSTM", "GRU"):
         st.error(f"{arch} : impossible de produire les prévisions : {exc}")
 
 st.subheader("3. Comparer les erreurs selon la volatilité")
+loaded_names = [name.removeprefix("Prévision — ") for name in columns[1:]]
+if loaded_names:
+    st.success("Prévisions calculées : " + ", ".join(loaded_names))
+else:
+    st.warning(
+        "Aucune prévision Deep Learning n'a pu être calculée : "
+        "consulte les messages d'erreur ci-dessus ou charge les poids disponibles."
+    )
 metrics = compute_metrics(table, columns)
 st.dataframe(metrics.round(5), hide_index=True, width="stretch")
 st.caption(
