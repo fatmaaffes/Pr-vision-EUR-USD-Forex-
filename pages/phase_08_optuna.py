@@ -1,4 +1,4 @@
-"""Optuna sur LSTM/GRU EUR/USD : validation chronologique, sans exploiter TEST."""
+"""Optuna LSTM/GRU/TCN EUR/USD : validation chronologique, sans exploiter TEST."""
 from __future__ import annotations
 
 from copy import deepcopy
@@ -10,7 +10,7 @@ import pandas as pd
 import streamlit as st
 from src.bce import get_data_or_stop
 
-st.title("🔬 Phase 8 bis — Optimisation automatique LSTM / GRU")
+st.title("🔬 Phase 8 bis — Optimisation LSTM / GRU / TCN")
 st.write(
     "Recherche d'hyperparamètres pour une prédiction **J+1** (prochaine publication BCE). "
     "On entraîne sur TRAIN, sélectionne sur VALIDATION et ne consulte pas TEST."
@@ -43,19 +43,7 @@ def clean_rates(raw: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-class RecurrentNet(nn.Module):
-    def __init__(self, architecture: str, hidden: int, layers: int, dropout: float):
-        super().__init__()
-        klass = nn.LSTM if architecture == "LSTM" else nn.GRU
-        self.recurrent = klass(
-            input_size=1, hidden_size=hidden, num_layers=layers,
-            dropout=dropout if layers > 1 else 0.0, batch_first=True,
-        )
-        self.head = nn.Linear(hidden, 1)
-
-    def forward(self, X):
-        sequence, _ = self.recurrent(X)
-        return self.head(sequence[:, -1, :]).squeeze(-1)
+from src.dl_architectures import build_network
 
 
 try:
@@ -104,14 +92,16 @@ cols[1].metric("VALIDATION", f"{val_end-train_end:,}")
 cols[2].metric("TEST réservé", f"{n-val_end:,}")
 cols[3].metric("Naïf · MAE validation", f"{naive_mae:.6f}")
 
-architecture = st.selectbox("Architecture", ["LSTM", "GRU"])
+architecture = st.selectbox("Architecture", ["LSTM", "GRU", "TCN"])
 a, b, c = st.columns(3)
 n_trials = a.slider("Essais Optuna", 5, 30, 10)
 max_epochs = b.slider("Époques max / essai", 10, 60, 30)
 patience = c.slider("Early stopping · patience", 3, 12, 7)
 st.caption(
-    "Optuna explore : fenêtres 10/30/60, couches 1–2, neurones 16/32/64, "
-    "dropout, taille des batchs et learning rate. Calcul CPU."
+    "Optuna explore : fenêtres 10/30/60, couches 1–2 (TCN jusqu'à 3), "
+    "neurones 16/32/64, dropout, batchs et learning rate. "
+    "TCN utilise des convolutions causales et des connexions résiduelles. "
+    "Calcul CPU ; aucune cible TEST n'est lue."
 )
 
 fingerprint = sha256(values.tobytes()).hexdigest()
@@ -125,7 +115,7 @@ if st.button("▶ Lancer Optuna", type="primary"):
     def objective(trial):
         lookback = trial.suggest_categorical("lookback", [10, 30, 60])
         hidden = trial.suggest_categorical("hidden", [16, 32, 64])
-        layers = trial.suggest_int("layers", 1, 2)
+        layers = trial.suggest_int("layers", 1, 3 if architecture == "TCN" else 2)
         dropout = (
             trial.suggest_categorical("dropout", [0.0, 0.1, 0.2])
             if layers > 1 else 0.0
@@ -135,7 +125,7 @@ if st.button("▶ Lancer Optuna", type="primary"):
         X_tr, y_tr, X_val, y_val = make_sequences(lookback)
 
         torch.manual_seed(42)
-        model = RecurrentNet(architecture, hidden, layers, dropout)
+        model = build_network(architecture, hidden, layers, dropout)
         optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
         criterion = nn.MSELoss()
         loader = DataLoader(
@@ -289,8 +279,8 @@ if saved is not None and saved["fingerprint"] == fingerprint:
         st.info("La baseline naïve reste meilleure sur la validation.")
 
 st.warning(
-    "Cette expérience univariée est indépendante des phases 8 et 9 actuelles : "
-    "elle n'injecte pas ses prévisions dans la phase 9. "
-    "Après sélection répétée sur validation, une nouvelle évaluation "
-    "hors échantillon doit confirmer la généralisation."
+    "LSTM, GRU et TCN sont entraînés et optimisés sur les mêmes partitions. "
+    "Leurs prévisions sont comparables dans la phase 9 bis (validation), "
+    "et ne sont pas injectées dans le test de la phase 9. Après sélection sur validation, "
+    "une nouvelle période hors échantillon doit confirmer la généralisation."
 )
