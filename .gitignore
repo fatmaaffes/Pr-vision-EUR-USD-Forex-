@@ -1,0 +1,14 @@
+# Artefacts locaux issus de l'entraînement Optuna
+artifacts/forex_models/*.pt
+artifacts/forex_models/*.pth
+
+# Environnements et caches Python
+__pycache__/
+.pytest_cache/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# Données BCE et exports locaux
+*.csv
