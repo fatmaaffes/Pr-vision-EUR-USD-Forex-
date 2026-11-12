@@ -30,6 +30,28 @@ st.markdown(
       }
       div[data-testid="stMetricLabel"] {font-size: .88rem;}
       div[data-testid="stMetricValue"] {font-size: 1.65rem;}
+      .fx-regime {
+        border-left: 4px solid #5aafaf; background: rgba(70,130,148,.11);
+        padding: 14px 18px; border-radius: 12px; margin: 10px 0 18px;
+        line-height: 1.55;
+      }
+      .fx-panel {
+        border: 1px solid rgba(145,164,190,.28);
+        border-radius: 18px; padding: 22px 24px; margin: 12px 0;
+        background: rgba(118,142,170,.075);
+      }
+      .fx-panel-primary {
+        border-color: rgba(87,169,174,.52);
+        background: linear-gradient(115deg, rgba(47,123,133,.22), rgba(90,120,153,.06));
+      }
+      .fx-kicker {color: #93bfcb; font-size: .84rem; font-weight: 650;
+        letter-spacing: .035em; margin-bottom: 7px;}
+      .fx-panel-title {font-size: 1.14rem; font-weight: 620; margin-bottom: 8px;}
+      .fx-value {font-size: clamp(2rem, 5vw, 2.6rem); font-weight: 750;
+        letter-spacing: -.025em; line-height: 1.15; margin: 8px 0 12px;}
+      .fx-muted {font-size: .9rem; opacity: .84; line-height: 1.6;}
+      .fx-panel-title, .fx-value, .fx-regime {overflow-wrap: anywhere;}
+      @media (max-width: 800px) {.fx-panel {padding: 17px 18px;}}
     </style>
     """,
     unsafe_allow_html=True,
@@ -77,14 +99,25 @@ else:
 
 st.divider()
 st.subheader("Le marché aujourd'hui")
-m1, m2, m3 = st.columns(3)
-m1.metric("Dernier taux de référence", f"{latest_rate:.4f}", help="1 EUR vaut ce nombre de dollars US.")
-m2.metric("Volatilité récente (20 rendements)", f"{volatility:.3f} %")
-m3.metric("Régime observé", regime_label)
+m1, m2 = st.columns(2)
+m1.metric(
+    "Dernier taux EUR/USD",
+    f"{latest_rate:.4f}",
+    help="1 euro correspond à ce nombre de dollars américains (référence BCE).",
+)
+m2.metric("Volatilité des 20 derniers rendements", f"{volatility:.3f} %")
+st.markdown(
+    f'<div class="fx-regime"><strong>Marché actuellement '
+    f'{"agité" if is_high else "calme"}.</strong> '
+    f'Les variations récentes sont '
+    f'{"élevées" if is_high else "modérées"} '
+    f'par rapport au seuil historique de {threshold:.3f} %.</div>',
+    unsafe_allow_html=True,
+)
 st.caption(
-    f"Dernier taux BCE connu : {latest_date:%d/%m/%Y} · "
-    f"Seuil de volatilité appris sur TRAIN : {threshold:.3f} % · "
-    "Volatilité basée uniquement sur les publications déjà disponibles."
+    f"Dernière publication BCE reçue : {latest_date:%d/%m/%Y}. "
+    "La volatilité est calculée sur les rendements déjà connus, "
+    "y compris celui de la dernière publication."
 )
 
 today_utc = pd.Timestamp.now(tz="UTC").date()
@@ -98,87 +131,147 @@ forecast_tab, risk_tab, explainer_tab = st.tabs(
     ["📈 Prévisions J+1", "💶 Scénarios & facture USD", "ℹ️ Comment lire ces résultats"]
 )
 
+# Ces deux valeurs sont calculées à partir de la situation connue AUJOURD'HUI.
+# Le régime ne transforme pas le GRU en modèle conditionnel à un choc futur.
+if is_high and gru_forecast is not None:
+    main_forecast = gru_forecast
+else:
+    main_forecast = naive_forecast
+
+
+def forecast_card(kicker: str, title: str, value: str, explanation: str, primary=False):
+    """Carte métier : aucun jargon ML dans le premier niveau de lecture."""
+    style = " fx-panel-primary" if primary else ""
+    st.markdown(
+        f'<div class="fx-panel{style}">'
+        f'<div class="fx-kicker">{kicker}</div>'
+        f'<div class="fx-panel-title">{title}</div>'
+        f'<div class="fx-value">{value}</div>'
+        f'<div class="fx-muted">{explanation}</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+
 with forecast_tab:
-    st.subheader("Deux approches, deux estimations")
-    p1, p2 = st.columns(2)
-    with p1:
-        st.metric("Naïf · maintien du dernier taux", f"{naive_forecast:.4f}")
-        st.caption("Prévision de persistance : le prochain taux = dernier taux BCE.")
-    with p2:
+    st.subheader("Prévision pour la prochaine publication BCE")
+    st.write(
+        "Nous partons du dernier taux connu et du niveau d'agitation "
+        "observé aujourd'hui. Deux approches donnent deux lectures possibles."
+    )
+
+    if not is_high:
+        forecast_card(
+            "PRÉVISION MISE EN AVANT · MARCHÉ CALME",
+            "Avec la faible volatilité observée aujourd'hui",
+            f"{naive_forecast:.4f} USD/EUR",
+            "Dans ce contexte, notre méthode de prévision privilégie la stabilité "
+            "du dernier taux publié. Elle a été légèrement plus précise dans "
+            "les périodes calmes de notre analyse historique.",
+            primary=True,
+        )
         if gru_forecast is not None:
-            st.metric(
-                "GRU · Deep Learning optimisé",
-                f"{gru_forecast:.4f}",
-                delta=f"{(gru_forecast / latest_rate - 1) * 100:+.3f} % vs aujourd'hui",
-                delta_color="off",
+            forecast_card(
+                "AUTRE ESTIMATION · À SURVEILLER SI LE MARCHÉ S'AGITE",
+                "Si les conditions de marché deviennent plus instables",
+                f"{gru_forecast:.4f} USD/EUR",
+                "Voici la seconde estimation calculée aujourd'hui à partir des "
+                "mêmes données connues. Elle provient de l'approche qui avait "
+                "obtenu une erreur légèrement inférieure dans les périodes agitées. "
+                "Elle ne tient pas compte d'un événement futur encore inconnu.",
             )
-            st.caption(f"Calcul réel du réseau entraîné · {gru_source}.")
         else:
-            st.metric("GRU · Deep Learning", "Non disponible")
-            st.caption("Aucune prévision GRU inventée : le modèle doit être entraîné.")
-
-    if is_high and gru_forecast is not None:
-        displayed_model = "GRU"
-        main_forecast = gru_forecast
-        interpretation = (
-            "La volatilité récente est **élevée**. Nous mettons en avant le GRU "
-            "à titre expérimental, car il a légèrement mieux résisté au régime "
-            "volatil sur notre validation. Le gain était faible et non confirmé "
-            "sur une période indépendante."
-        )
+            forecast_card(
+                "AUTRE ESTIMATION · MARCHÉ PLUS AGITÉ",
+                "Si la volatilité augmente demain",
+                "À calculer",
+                "La seconde estimation nécessite un modèle préalablement enregistré. "
+                "Nous ne remplaçons pas sa prévision manquante par un chiffre inventé.",
+            )
     else:
-        displayed_model = "Naïf"
-        main_forecast = naive_forecast
-        interpretation = (
-            "La volatilité récente est **faible** : la prévision naïve reste "
-            "notre référence la plus robuste sur la validation."
-            if not is_high else
-            "La volatilité récente est **élevée**, mais le GRU n'est pas chargé. "
-            "Nous utilisons temporairement la référence naïve."
+        if gru_forecast is not None:
+            forecast_card(
+                "PRÉVISION MISE EN AVANT · MARCHÉ AGITÉ",
+                "Avec la forte volatilité observée aujourd'hui",
+                f"{gru_forecast:.4f} USD/EUR",
+                "Cette estimation provient de la méthode qui avait légèrement "
+                "mieux résisté aux périodes agitées dans notre analyse historique. "
+                "Son avantage n'est pas encore confirmé sur de nouvelles données.",
+                primary=True,
+            )
+        else:
+            forecast_card(
+                "MARCHÉ AGITÉ · ESTIMATION À CONFIRMER",
+                "La prévision adaptée aux périodes agitées est indisponible",
+                "À calculer",
+                "Le modèle correspondant n'est pas enregistré sur cet appareil. "
+                "La référence de stabilité reste disponible ci-dessous.",
+                primary=True,
+            )
+        forecast_card(
+            "AUTRE ESTIMATION · MARCHÉ CALME",
+            "Si le marché retrouve des variations modérées",
+            f"{naive_forecast:.4f} USD/EUR",
+            "Cette estimation de stabilité utilise le dernier taux connu. "
+            "Elle est affichée comme point de comparaison, et non comme "
+            "une prévision conditionnelle de la volatilité future.",
         )
 
-    st.info(
-        f"**Lecture du jour — {displayed_model} mis en avant : "
-        f"{main_forecast:.4f} USD/EUR.**\n\n{interpretation}"
+    # Le scénario de forte volatilité est un intervalle d'hypothèses,
+    # PAS la prédiction du modèle avec un événement politique fictif.
+    high_stress = stressed_rates(latest_rate, context["high_sigma"])
+    low_end = high_stress["Dépréciation EUR"]
+    high_end = high_stress["Appréciation EUR"]
+    st.markdown("#### Et si une annonce provoque de fortes variations demain ?")
+    st.write(
+        f"À titre de **simulation**, une variation d'environ "
+        f"±{context['high_sigma']:.3f} % autour du dernier taux BCE donnerait "
+        f"une plage indicative de **{low_end:.4f} à {high_end:.4f} USD/EUR**."
     )
     st.caption(
-        "Il ne s'agit pas d'une certitude ni d'un conseil de trading. "
-        "La volatilité récente ne permet pas à elle seule de connaître "
-        "la direction du prochain taux."
+        "Cette plage n'est pas une prévision du modèle. "
+        "Une hausse de volatilité peut entraîner une hausse OU une baisse du taux ; "
+        "nous ne connaissons pas à l'avance l'effet d'une annonce politique."
+    )
+    st.info(
+        "La situation du jour sert à mettre une estimation en avant. "
+        "Les deux approches sont calculées avec les informations connues aujourd'hui ; "
+        "le comportement réel du marché demain reste incertain. "
+        "La comparaison des approches demeure expérimentale."
     )
 
     if gru_forecast is None:
-        st.warning(
-            "Pour afficher la prévision GRU réelle : ouvrir « 08 bis · Optuna LSTM/GRU », "
-            "optimiser le GRU. La nouvelle version enregistre ensuite automatiquement ses poids."
-        )
-        st.page_link(
-            "pages/phase_08_optuna.py", label="Ouvrir l'optimisation GRU",
-            icon="🔬",
-        )
-        with st.expander("Diagnostic de chargement du GRU"):
-            st.code(gru_error or "Aucun modèle")
-    else:
-        st.write("### Évolution récente du taux BCE")
-        history = rates.tail(100)[["TIME_PERIOD", "OBS_VALUE"]].copy()
-        history.columns = ["Date", "EUR/USD"]
-        line = (
-            alt.Chart(history)
-            .mark_line(color="#438fb5", strokeWidth=2.5)
-            .encode(
-                x=alt.X("Date:T", title="Date de publication BCE"),
-                y=alt.Y("EUR/USD:Q", title="USD par EUR", scale=alt.Scale(zero=False)),
-                tooltip=[
-                    alt.Tooltip("Date:T", title="Date", format="%d/%m/%Y"),
-                    alt.Tooltip("EUR/USD:Q", title="EUR/USD", format=".4f"),
-                ],
+        with st.expander("Pourquoi manque-t-il une estimation ? · Informations techniques"):
+            st.write(
+                "Le modèle de réseau neuronal n'est pas encore chargé. "
+                "Ouvre la phase 8 bis pour enregistrer ses poids, puis reviens ici."
             )
+            st.page_link(
+                "pages/phase_08_optuna.py",
+                label="Ouvrir la préparation du modèle", icon="🔬",
+            )
+            st.code(gru_error or "Aucun modèle enregistré")
+
+    st.write("#### Évolution récente de l'EUR/USD")
+    history = rates.tail(100)[["TIME_PERIOD", "OBS_VALUE"]].copy()
+    history.columns = ["Date", "EUR/USD"]
+    history_chart = (
+        alt.Chart(history)
+        .mark_line(color="#438fb5", strokeWidth=2.5)
+        .encode(
+            x=alt.X("Date:T", title="Date BCE"),
+            y=alt.Y("EUR/USD:Q", title="USD par EUR", scale=alt.Scale(zero=False)),
+            tooltip=[
+                alt.Tooltip("Date:T", title="Date", format="%d/%m/%Y"),
+                alt.Tooltip("EUR/USD:Q", title="EUR/USD", format=".4f"),
+            ],
         )
-        st.altair_chart(line.properties(height=255), width="stretch")
-        st.caption(
-            "Historique réalisé ; les deux prévisions J+1 sont affichées dans les cartes "
-            "ci-dessus. La date exacte de la prochaine publication peut dépendre du calendrier BCE."
-        )
+    )
+    st.altair_chart(history_chart.properties(height=235), width="stretch")
+    st.caption(
+        "J+1 signifie la prochaine publication BCE, pas nécessairement le "
+        "prochain jour du calendrier. Les taux affichés sont indicatifs."
+    )
 
 with risk_tab:
     st.subheader("Si le marché devient plus calme ou plus agité…")
