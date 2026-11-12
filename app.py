@@ -25,6 +25,7 @@ pages = {
         st.Page("pages/phase_08.py", title="08 · Deep Learning", icon="🧠", url_path="phase-08"),
         st.Page("pages/phase_08_optuna.py", title="08 bis · Optuna LSTM/GRU", icon="🔬", url_path="phase-08-optuna"),
         st.Page("pages/phase_09.py", title="09 · Évaluation", icon="🔬", url_path="phase-09"),
+        st.Page("pages/phase_09_regimes.py", title="09 bis · Régimes de volatilité", icon="🌡️", url_path="phase-09-regimes"),
     ],
     "Appliquer et livrer": [
         st.Page("pages/phase_10.py", title="10 · Risque de change", icon="💶", url_path="phase-10"),
