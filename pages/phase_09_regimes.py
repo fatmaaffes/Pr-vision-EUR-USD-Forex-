@@ -1,4 +1,4 @@
-"""Phase 9 bis : performances de Naïf, LSTM et GRU par régime de volatilité."""
+"""Phase 9 bis : comparaison de Naïf, LSTM, GRU et TCN par volatilité."""
 from __future__ import annotations
 
 from hashlib import sha256
@@ -7,9 +7,11 @@ from io import BytesIO
 import numpy as np
 import pandas as pd
 import streamlit as st
+import altair as alt
 
 from src.bce import get_data_or_stop
 from src.volatility_regimes import clean_rates, validation_frame, compute_metrics
+from src.dashboard_models import load_checkpoint
 
 st.title("🌡️ Phase 9 bis — Comparaison par volatilité")
 st.write(
@@ -27,23 +29,7 @@ except (ImportError, OSError) as exc:
     st.stop()
 
 
-class RecurrentNet(nn.Module):
-    """Architecture identique à la page 8 bis Optuna."""
-    def __init__(self, architecture, hidden, layers, dropout):
-        super().__init__()
-        klass = nn.LSTM if architecture == "LSTM" else nn.GRU
-        self.recurrent = klass(
-            input_size=1,
-            hidden_size=int(hidden),
-            num_layers=int(layers),
-            dropout=float(dropout) if int(layers) > 1 else 0.0,
-            batch_first=True,
-        )
-        self.head = nn.Linear(int(hidden), 1)
-
-    def forward(self, x):
-        output, _ = self.recurrent(x)
-        return self.head(output[:, -1, :]).squeeze(-1)
+from src.dl_architectures import build_network
 
 
 frame = clean_rates(get_data_or_stop())
@@ -75,11 +61,11 @@ st.caption(
     "les rendements jusqu'à i-1 (aucune information future)."
 )
 
-st.subheader("2. Récupérer les modèles LSTM / GRU optimisés")
+st.subheader("2. Modèles optimisés disponibles")
 st.write(
-    "La page 8 bis conserve les poids dans la session Streamlit. "
-    "Si tu as redémarré l'application, importe les fichiers .pt "
-    "exportés depuis la page 8 bis."
+    "LSTM, GRU et TCN sont récupérés automatiquement depuis la session "
+    "Streamlit ou les modèles enregistrés sur ce PC. L'import manuel "
+    "n'est utile qu'en cas de sauvegarde absente."
 )
 
 
@@ -102,6 +88,18 @@ def get_checkpoint(architecture: str):
             f"{architecture} : les données BCE ont changé depuis l'optimisation. "
             "Les anciens résultats de session ne sont pas réutilisés."
         )
+
+    checkpoint_local, local_status = load_checkpoint(architecture)
+    if checkpoint_local is not None:
+        st.success(f"{architecture} : {local_status}.")
+        return {
+            "params": checkpoint_local["parameters"],
+            "weights": checkpoint_local["model_state_dict"],
+            "mean": float(checkpoint_local["standardization_mean"]),
+            "std": float(checkpoint_local["standardization_std"]),
+            "train_end": checkpoint_local["train_end"],
+            "val_end": checkpoint_local["validation_end"],
+        }
 
     uploaded = st.file_uploader(
         f"Importer les poids {architecture} depuis Optuna (.pt)",
@@ -133,7 +131,7 @@ def get_checkpoint(architecture: str):
 
 checkpoints = {
     arch: get_checkpoint(arch)
-    for arch in ("LSTM", "GRU")
+    for arch in ("LSTM", "GRU", "TCN")
 }
 
 
@@ -160,8 +158,8 @@ def predict_validation(arch: str, checkpoint: dict) -> np.ndarray:
     if not (1 <= lookback < train_end):
         raise ValueError(f"{arch} : longueur de fenêtre invalide.")
 
-    network = RecurrentNet(
-        arch, params["hidden"], params["layers"], params.get("dropout", 0.0)
+    network = build_network(
+        arch, int(params["hidden"]), int(params["layers"]), float(params.get("dropout", 0.0))
     )
     network.load_state_dict(checkpoint["weights"], strict=True)
     network.eval()
@@ -211,9 +209,25 @@ st.caption(
 )
 
 if len(columns) > 1:
-    pivot = metrics.pivot(index="Modèle", columns="Régime", values="MAE")
     st.write("### MAE par modèle et par régime (plus faible = meilleure)")
-    st.bar_chart(pivot, width="stretch")
+    chart_data = metrics[["Régime", "Modèle", "MAE"]].copy()
+    grouped_chart = (
+        alt.Chart(chart_data)
+        .mark_bar()
+        .encode(
+            x=alt.X("Modèle:N", title="Modèle", axis=alt.Axis(labelAngle=0)),
+            xOffset=alt.XOffset("Régime:N"),
+            y=alt.Y("MAE:Q", title="MAE (USD/EUR)", scale=alt.Scale(zero=True)),
+            color=alt.Color("Régime:N", title="Régime de volatilité"),
+            tooltip=[
+                alt.Tooltip("Modèle:N"),
+                alt.Tooltip("Régime:N"),
+                alt.Tooltip("MAE:Q", format=".6f"),
+            ],
+        )
+        .properties(height=330)
+    )
+    st.altair_chart(grouped_chart, width="stretch")
     high = metrics[metrics["Régime"] == "Forte volatilité"]
     winner = high.loc[high["MAE"].idxmin()]
     st.info(
@@ -224,9 +238,9 @@ if len(columns) > 1:
     )
 else:
     st.warning(
-        "Seul le naïf est disponible. Pour comparer avec LSTM/GRU, "
-        "ouvre Phase 8 bis, lance les deux optimisations, puis reviens ici "
-        "sans redémarrer Streamlit ; ou importe leurs fichiers .pt."
+        "Seul le naïf est disponible. Pour comparer LSTM/GRU/TCN, "
+        "ouvre Phase 8 bis, lance les optimisations ; les meilleurs poids "
+        "seront enregistrés automatiquement pour cette page."
     )
 
 st.subheader("4. Examiner les dates de forte volatilité")
