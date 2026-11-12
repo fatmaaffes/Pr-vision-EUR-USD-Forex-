@@ -98,7 +98,7 @@ else:
     gru_error = loaded_from
 
 st.divider()
-st.subheader("Le marché aujourd'hui")
+st.subheader(f"Situation du marché — dernière publication BCE : {latest_date:%d/%m/%Y}")
 m1, m2 = st.columns(2)
 m1.metric(
     "Dernier taux EUR/USD",
@@ -391,6 +391,10 @@ with explainer_tab:
         **À quoi sert la volatilité ?** Les 20 derniers rendements BCE mesurent
         l'amplitude récente des variations. La comparaison au seuil TRAIN
         identifie un régime *actuel* de marché, et non celui de demain.
+
+        **Et le TCN ?** Un réseau convolutif temporel est désormais testé dans
+        les pages techniques 8 bis et 9 bis. Il ne remplacera pas le modèle
+        proposé à l'utilisateur sans démontrer une amélioration robuste.
 
         **Pourquoi le GRU est-il mis en avant en forte volatilité ?**
         Notre analyse exploratoire sur VALIDATION suggère un gain très faible
