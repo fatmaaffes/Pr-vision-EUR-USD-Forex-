@@ -233,6 +233,18 @@ if st.button("▶ Lancer Optuna", type="primary"):
             "train_end": str(frame.iloc[train_end-1]["TIME_PERIOD"].date()),
             "val_end": str(frame.iloc[val_end-1]["TIME_PERIOD"].date()),
         }
+        # Sauvegarde locale automatique : réutilisable par le dashboard final.
+        # Les poids restent dans artifacts/forex_models (hors dépôt Git).
+        try:
+            from src.dashboard_models import save_checkpoint
+            file_saved = save_checkpoint(architecture, st.session_state[key])
+        except (OSError, RuntimeError, ValueError, KeyError) as error:
+            st.warning(
+                "Optimisation terminée, mais sauvegarde locale impossible : "
+                f"{error}. Utilise l'export .pt ci-dessous."
+            )
+        else:
+            st.caption(f"Meilleurs poids sauvegardés automatiquement : {file_saved}")
         st.success("Optimisation terminée. Résultats conservés pour cette session.")
 
 saved = st.session_state.get(key)
