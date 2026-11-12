@@ -23,7 +23,7 @@ pages = {
         st.Page("pages/phase_06.py", title="06 · Préparation des séquences", icon="🧮", url_path="phase-06"),
         st.Page("pages/phase_07.py", title="07 · Baselines et ML", icon="📏", url_path="phase-07"),
         st.Page("pages/phase_08.py", title="08 · Deep Learning", icon="🧠", url_path="phase-08"),
-        st.Page("pages/phase_08_optuna.py", title="08 bis · Optuna LSTM/GRU", icon="🔬", url_path="phase-08-optuna"),
+        st.Page("pages/phase_08_optuna.py", title="08 bis · Optuna LSTM/GRU/TCN", icon="🔬", url_path="phase-08-optuna"),
         st.Page("pages/phase_09.py", title="09 · Évaluation", icon="🔬", url_path="phase-09"),
         st.Page("pages/phase_09_regimes.py", title="09 bis · Régimes de volatilité", icon="🌡️", url_path="phase-09-regimes"),
     ],
