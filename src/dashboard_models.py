@@ -15,7 +15,7 @@ MODEL_DIR = ROOT / "artifacts" / "forex_models"
 
 
 def checkpoint_path(architecture: str) -> Path:
-    if architecture not in ("LSTM", "GRU"):
+    if architecture not in ("LSTM", "GRU", "TCN"):
         raise ValueError("Architecture inconnue.")
     return MODEL_DIR / f"{architecture.lower()}_optuna_best.pt"
 
@@ -64,7 +64,7 @@ def load_checkpoint(architecture: str, session: dict | None = None) -> tuple[dic
 def predict_next(checkpoint: dict, architecture: str, rates: pd.DataFrame) -> float:
     """Prévoir J+1 à partir des derniers taux connus et du scaler TRAIN original."""
     import torch
-    from torch import nn
+    from src.dl_architectures import build_network
 
     if checkpoint.get("architecture") != architecture:
         raise ValueError("Architecture incompatible avec le modèle sauvegardé.")
@@ -98,22 +98,7 @@ def predict_next(checkpoint: dict, architecture: str, rates: pd.DataFrame) -> fl
     if lookback < 2 or lookback > len(values) or hidden < 1 or layers < 1:
         raise ValueError("Hyperparamètres du réseau invalides.")
     dropout = float(config.get("dropout", 0.0))
-    network_cls = nn.LSTM if architecture == "LSTM" else nn.GRU
-
-    class Network(nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.recurrent = network_cls(
-                input_size=1, hidden_size=hidden, num_layers=layers,
-                dropout=dropout if layers > 1 else 0.0, batch_first=True,
-            )
-            self.head = nn.Linear(hidden, 1)
-
-        def forward(self, x):
-            output, _ = self.recurrent(x)
-            return self.head(output[:, -1, :]).squeeze(-1)
-
-    network = Network()
+    network = build_network(architecture, hidden, layers, dropout)
     network.load_state_dict(checkpoint["model_state_dict"], strict=True)
     network.eval()
     features = ((values[-lookback:] - scaler_mean) / scaler_std).astype(np.float32)
