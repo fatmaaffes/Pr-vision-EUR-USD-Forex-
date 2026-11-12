@@ -44,6 +44,9 @@ def clean_rates(raw: pd.DataFrame) -> pd.DataFrame:
 
 
 from src.dl_architectures import build_network
+from src.dashboard_models import (
+    load_checkpoint, evaluate_saved_checkpoint, session_to_checkpoint,
+)
 
 
 try:
@@ -90,7 +93,35 @@ cols = st.columns(4)
 cols[0].metric("TRAIN", f"{train_end:,}")
 cols[1].metric("VALIDATION", f"{val_end-train_end:,}")
 cols[2].metric("TEST réservé", f"{n-val_end:,}")
-cols[3].metric("Naïf · MAE validation", f"{naive_mae:.6f}")
+cols[3].metric("Naïf · MAE validation actuelle", f"{naive_mae:.6f}")
+
+# Inventaire sauvegardé : visible dès l'ouverture, sans réentraînement.
+st.subheader("Modèles déjà entraînés")
+inventory = []
+for candidate in ("LSTM", "GRU", "TCN"):
+    existing_session = st.session_state.get(f"forex_optuna_{candidate}")
+    if existing_session and existing_session.get("fingerprint") == sha256(values.tobytes()).hexdigest():
+        inventory.append({
+            "Architecture": candidate,
+            "Disponibilité": "En mémoire de session",
+            "MAE validation": f"{existing_session['mae']:.6f}",
+        })
+        continue
+    stored_model, status = load_checkpoint(candidate)
+    inventory.append({
+        "Architecture": candidate,
+        "Disponibilité": "Enregistré sur le PC" if stored_model else status,
+        "MAE validation": (
+            f"{stored_model['validation_mae']:.6f}"
+            if stored_model and stored_model.get("validation_mae") is not None
+            else "À retrouver" if stored_model else "—"
+        ),
+    })
+st.dataframe(pd.DataFrame(inventory), hide_index=True, width="stretch")
+st.caption(
+    "Les modèles enregistrés sont restaurés automatiquement. "
+    "Cliquer sur « Lancer Optuna » sert uniquement à lancer un nouvel entraînement."
+)
 
 architecture = st.selectbox("Architecture", ["LSTM", "GRU", "TCN"])
 a, b, c = st.columns(3)
@@ -237,46 +268,116 @@ if st.button("▶ Lancer Optuna", type="primary"):
             st.caption(f"Meilleurs poids sauvegardés automatiquement : {file_saved}")
         st.success("Optimisation terminée. Résultats conservés pour cette session.")
 
+# À chaque réouverture : d'abord session courante, sinon checkpoint persistant.
 saved = st.session_state.get(key)
-if saved is not None and saved["fingerprint"] == fingerprint:
-    st.subheader(f"Résultats — {architecture}")
-    c1, c2 = st.columns(2)
-    c1.metric("Meilleure MAE validation", f"{saved['mae']:.6f}")
-    c2.metric("Naïf · MAE validation", f"{saved['naive']:.6f}")
-    st.json(saved["params"])
-    st.dataframe(saved["trials"], width="stretch")
-    st.line_chart(
-        pd.DataFrame(saved["artifacts"]["history"])
-        .set_index("Époque")[["MSE TRAIN", "MSE VALIDATION"]],
-        width="stretch",
-    )
-    st.download_button(
-        "Exporter les essais (CSV)",
-        saved["trials"].to_csv(index=False).encode("utf-8-sig"),
-        file_name=f"eurusd_optuna_{architecture.lower()}_essais.csv",
-        mime="text/csv",
+saved_matches = saved is not None and saved.get("fingerprint") == fingerprint
+if saved_matches:
+    best_checkpoint = session_to_checkpoint(architecture, saved)
+    saved_source = "Résultat de cette session"
+else:
+    best_checkpoint, saved_source = load_checkpoint(architecture)
+
+if best_checkpoint is not None:
+    st.subheader(f"Résultats enregistrés — {architecture}")
+    st.success(
+        f"Modèle {architecture} disponible : {saved_source}. "
+        "Aucun nouvel entraînement nécessaire."
     )
 
-    checkpoint = BytesIO()
-    torch.save({
-        "architecture": architecture,
-        "parameters": saved["params"],
-        "model_state_dict": saved["artifacts"]["weights"],
-        "standardization_mean": saved["mean"],
-        "standardization_std": saved["std"],
-        "train_end": saved["train_end"],
-        "validation_end": saved["val_end"],
-    }, checkpoint)
+    # Validation du modèle sur la tranche chronologique d'origine, pour éviter
+    # qu'une publication BCE ajoutée demain ne change le score déjà enregistré.
+    try:
+        if best_checkpoint.get("validation_mae") is None or best_checkpoint.get("naive_mae") is None:
+            with st.spinner("Récupération des métriques historiques sans entraînement…"):
+                recovered = evaluate_saved_checkpoint(best_checkpoint, architecture, frame)
+            metric_mae = float(recovered["mae"])
+            metric_naive = float(recovered["naive_mae"])
+            historical_dates = (
+                recovered["train_end"], recovered["validation_end"]
+            )
+            st.caption(
+                "Ce fichier .pt est d'une version précédente : MAE recalculée "
+                "sur sa validation d'origine, sans optimiser ni réentraîner."
+            )
+        else:
+            metric_mae = float(best_checkpoint["validation_mae"])
+            metric_naive = float(best_checkpoint["naive_mae"])
+            historical_dates = (
+                best_checkpoint["train_end"], best_checkpoint["validation_end"]
+            )
+    except (KeyError, ValueError, RuntimeError, TypeError, IndexError) as exc:
+        st.error(f"Impossible de reconstituer les métriques historiques : {exc}")
+        metric_mae = None
+        metric_naive = None
+        historical_dates = None
+
+    if metric_mae is not None and metric_naive is not None:
+        c1, c2 = st.columns(2)
+        c1.metric("MAE validation du modèle entraîné", f"{metric_mae:.6f}")
+        c2.metric("MAE naïf · même validation", f"{metric_naive:.6f}")
+        if metric_mae < metric_naive:
+            st.success("Le réseau dépasse le naïf sur la validation d'origine.")
+        else:
+            st.info("Le naïf reste meilleur sur la validation d'origine.")
+
+    if historical_dates:
+        st.caption(
+            "Entraînement jusqu'au " + historical_dates[0] +
+            " · Validation jusqu'au " + historical_dates[1] +
+            " (dates figées lors de l'optimisation)."
+        )
+    st.write("**Hyperparamètres du modèle sauvegardé**")
+    st.json(best_checkpoint["parameters"])
+
+    # Les anciens checkpoints n'enregistraient pas les essais ni la courbe ;
+    # les fichiers récents conservent ces métadonnées JSON simples.
+    trials_json = best_checkpoint.get("trials_json", "")
+    if saved_matches and hasattr(saved.get("trials"), "to_csv"):
+        trials_frame = saved["trials"]
+    elif trials_json:
+        try:
+            from io import StringIO
+            trials_frame = pd.read_json(StringIO(trials_json), orient="records")
+        except (ValueError, TypeError):
+            trials_frame = None
+    else:
+        trials_frame = None
+    if trials_frame is not None and not trials_frame.empty:
+        with st.expander("Historique des essais Optuna", expanded=False):
+            st.dataframe(trials_frame, width="stretch")
+        st.download_button(
+            "Exporter les essais (CSV)",
+            trials_frame.to_csv(index=False).encode("utf-8-sig"),
+            file_name=f"eurusd_optuna_{architecture.lower()}_essais.csv",
+            mime="text/csv",
+        )
+
+    history = best_checkpoint.get("training_history") or []
+    if history:
+        history_frame = pd.DataFrame(history)
+        st.line_chart(
+            history_frame.set_index("Époque")[["MSE TRAIN", "MSE VALIDATION"]],
+            width="stretch",
+        )
+    else:
+        st.caption(
+            "Courbe d'entraînement indisponible dans cet ancien checkpoint ; "
+            "les poids et les hyperparamètres sont bien conservés."
+        )
+
+    checkpoint_data = BytesIO()
+    torch.save(best_checkpoint, checkpoint_data)
     st.download_button(
-        "Exporter le meilleur modèle (.pt)", checkpoint.getvalue(),
+        "Exporter le modèle sauvegardé (.pt)", checkpoint_data.getvalue(),
         file_name=f"eurusd_optuna_{architecture.lower()}_best.pt",
         mime="application/octet-stream",
     )
-
-    if saved["mae"] < saved["naive"]:
-        st.success("Le réseau dépasse la baseline naïve sur la validation.")
-    else:
-        st.info("La baseline naïve reste meilleure sur la validation.")
+else:
+    st.info(
+        f"Aucun modèle {architecture} sauvegardé sur ce PC. "
+        "Si tu as encore son .pt exporté, conserve-le ; sinon "
+        "Optuna doit être lancé une seule fois pour créer un checkpoint."
+    )
 
 st.warning(
     "LSTM, GRU et TCN sont entraînés et optimisés sur les mêmes partitions. "
